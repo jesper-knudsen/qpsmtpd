@@ -1,0 +1,161 @@
+#!perl -w
+#############################################################################
+#
+#          Scandinavian Mail eXchange - ScanMailX.com
+#
+# qpsmtpd module build to support https://www.invaluement.com/serviceproviderdnsbl/
+#
+##############################################################################
+
+use Data::Validate::Domain qw(is_domain);
+use LWP::UserAgent;
+
+my @SPBL_IDs = ();
+my @SPBL_Domains = ();
+
+sub register {
+  my ($self, $qp, @args) = @_;
+
+  $self->{spbl_lasttime} = 0;
+  $self->{spbl_lastreload} = 0;
+  
+  my $rc = $self->reload_spbl();
+  
+  if ($rc) {
+    $self->register_hook("data_post", "hook_data_post_scanmailx");
+  }
+}
+
+sub hook_connect {
+  my ($self, $transaction) = @_;
+
+  $self->reload_spbl();
+
+  return (DECLINED);
+
+}
+
+sub reload_spbl {
+  my ($self) = @_;
+
+  # reload every hours
+  if (time() > $self->{spbl_lastreload} + 60*10) {
+    $self->{spbl_lastreload} = time();
+  } else {
+    return;
+  }
+
+#  Qpsmtpd->varlog(LOGINFO, "init", "spbl", "Reloading SPBL...");
+
+  @SPBL_IDs = ();
+  @SPBL_Domains = ();
+
+  my $max_entries = 2000;
+  my $count = 0;
+
+  my $Dest = $self->spool_dir();
+
+  my $URL_IDs = 'http://www.invaluement.com/spdata/sendgrid-id-dnsbl.txt';
+  my $File_IDs = 'sendgrid-id-dnsbl.txt';
+
+  my $URL_Domains = 'https://www.invaluement.com/spdata/sendgrid-envelopefromdomain-dnsbl.txt';
+  my $File_Domains = 'sendgrid-envelopefromdomain-dnsbl.txt';
+
+  my $browser = LWP::UserAgent->new();
+
+  $browser->timeout(10);
+
+  my $response = $browser->get($URL_IDs,
+                               ':content_file' => "$Dest/$File_IDs"
+      );
+
+  if ($response->is_success) {
+    if (open (READ, "< $Dest/$File_IDs")) {
+      foreach my $item (<READ>) {
+	chomp($item);
+	next if ($item =~ /^#/);
+	if ( $item =~ /^[0-9]+$/ ) {   
+#	  Qpsmtpd->varlog(LOGINFO, "init", "spbl", "Adding SendGrid ID: \"$item\"");
+
+          if (++$count > $max_entries) {
+            Qpsmtpd->varlog(LOGINFO, "init", "spbl", "Reached limit of $max_entries SendGrid IDs");
+            last;
+          }
+
+	  push (@SPBL_IDs,$item);
+	}
+      }
+    }
+    unlink "$Dest/$File_IDs";
+  }
+
+
+  $count = 0;
+
+  $response = $browser->get($URL_Domains,
+			    ':content_file' => "$Dest/$File_Domains"
+      );
+  
+  if ($response->is_success) {
+    if (open (READ, "< $Dest/$File_Domains")) {
+      foreach my $item (<READ>) {
+        chomp($item);
+        next if ($item =~ /^#/);
+        if ( is_domain($item)) {
+#	  Qpsmtpd->varlog(LOGINFO, "init", "spbl", "Adding SendGrid Domain: \"$item\"");
+	  
+	  if (++$count > $max_entries) {
+	    Qpsmtpd->varlog(LOGINFO, "init", "spbl", "Reached limit of $max_entries SendGrid Domains");
+	    last;
+	  }
+	  
+          push (@SPBL_Domains,$item);
+        }
+      }
+    }
+    unlink "$Dest/$File_Domains";
+  }
+  
+  
+  return 1;
+}
+
+sub hook_mail {
+  my ($self,$transaction, $sender) = @_;
+
+  my $from;
+
+  if ($sender->host and $sender->user) {
+    $from = lc($sender->user) . '@' . lc($sender->host);
+  } else {
+    return DECLINED;
+  }
+
+  return DECLINED if ($from eq '');
+
+  my ($id,$rest) = $from =~ /^bounces\+([^-]+)-(.*)\@sendgrid\.net$/;
+
+  if (defined($id)) {
+    
+#    $self->log(LOGINFO, "SendGrid Mail \"$from\" with ID \"$id\"");
+    
+    if (grep (/$id/,@SPBL_IDs)) {
+      
+      $self->log(LOGINFO, "SendGrid Match ID \"$id\" on \"$from\"");
+      return (DENY,"Message was sent from a known SendGrid spammer");
+    }
+  }
+
+  # Custom Sendgrid domain
+
+  if ($from =~ /^bounces\+/) {
+    foreach my $Domain (@SPBL_Domains) {
+      if ($from =~ /^bounces\+(.*).$Domain$/) {
+	$self->log(LOGINFO, "SendGrid Match Domain \"$Domain\" on \"$from\"");
+	return (DENY,"Message was sent from a known SendGrid spammer");
+      }
+    }
+  }
+  return DECLINED;
+}
+
