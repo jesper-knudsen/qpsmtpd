@@ -16,14 +16,7 @@ my @SPBL_Domains = ();
 sub register {
   my ($self, $qp, @args) = @_;
 
-  $self->{spbl_lasttime} = 0;
   $self->{spbl_lastreload} = 0;
-  
-  my $rc = $self->reload_spbl();
-  
-  if ($rc) {
-    $self->register_hook("data_post", "hook_data_post_scanmailx");
-  }
 }
 
 sub hook_connect {
@@ -32,7 +25,6 @@ sub hook_connect {
   $self->reload_spbl();
 
   return (DECLINED);
-
 }
 
 sub reload_spbl {
@@ -58,7 +50,7 @@ sub reload_spbl {
   my $URL_IDs = 'http://www.invaluement.com/spdata/sendgrid-id-dnsbl.txt';
   my $File_IDs = 'sendgrid-id-dnsbl.txt';
 
-  my $URL_Domains = 'https://www.invaluement.com/spdata/sendgrid-envelopefromdomain-dnsbl.txt';
+  my $URL_Domains = 'http://www.invaluement.com/spdata/sendgrid-envelopefromdomain-dnsbl.txt';
   my $File_Domains = 'sendgrid-envelopefromdomain-dnsbl.txt';
 
   my $browser = LWP::UserAgent->new();
