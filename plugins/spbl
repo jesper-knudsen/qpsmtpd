@@ -37,7 +37,7 @@ sub reload_spbl {
     return;
   }
 
-#  Qpsmtpd->varlog(LOGINFO, "init", "spbl", "Reloading SPBL...");
+  Qpsmtpd->varlog(LOGINFO, "init", "spbl", "Reloading SPBL...");
 
   @SPBL_IDs = ();
   @SPBL_Domains = ();
